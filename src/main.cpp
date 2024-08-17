@@ -93,7 +93,6 @@ struct TGraph {
     };
 
     std::vector<std::vector<TNode>> find_all_faces() {
-        normalize();
         PlanarGraph g(nodes.size());
 
         for (Index from = 0; from < nodes.size(); from++) {
@@ -138,72 +137,6 @@ struct TGraph {
                                                    return sum + v.size();
                                                });
         std::cout << "Edges: " << number_of_edges << std::endl;
-    }
-
-    struct Intersection {
-        Id from_i;
-        Id to_i;
-        Id from_j;
-        Id to_j;
-        point_t point;
-    };
-
-    //  This method makes Graph planar
-    void normalize() {
-        std::vector<Intersection> intersections;
-
-        // Find all intersections
-        for (Index i = 0; i < nodes.size(); ++i) {
-            for (auto to_i: edges[i]) {
-                if (i >= to_i) {
-                    continue;
-                }
-                bool is_valid = true;
-                for (Index j = i + 1; j < nodes.size(); ++j) {
-                    if (to_i == j) {
-                        continue;
-                    }
-                    for (auto to_j: edges[j]) {
-                        if (to_j == i or j >= to_j or to_i == to_j) {
-                            continue;
-                        }
-
-                        segment_t seg_i{{nodes[i].lat,    nodes[i].lng},
-                                        {nodes[to_i].lat, nodes[to_i].lng}};
-                        segment_t seg_j{{nodes[j].lat,    nodes[j].lng},
-                                        {nodes[to_j].lat, nodes[to_j].lng}};
-                        std::vector<point_t> output;
-                        geometry::intersection(seg_i, seg_j, output);
-                        if (!output.empty()) {
-                            intersections.push_back({nodes[i].id, nodes[to_i].id, nodes[j].id, nodes[to_j].id, output[0]});
-                            is_valid = false;
-                            break;
-                        }
-                    }
-                    if (!is_valid) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        std::cout << "Intersections: " << intersections.size() << std::endl;
-        for (const auto &intersection: intersections) {
-            std::cout << "Intersection: " << intersection.from_i << " -> " << intersection.to_i << " and "
-                      << intersection.from_j << " -> " << intersection.to_j << " at " << intersection.point.get<0>()
-                      << ' ' << intersection.point.get<1>() << std::endl;
-        }
-
-        for (const auto &intersection: intersections) {
-            remove_edge(intersection.from_i, intersection.to_i);
-            remove_edge(intersection.from_j, intersection.to_j);
-//            auto new_node_id = _max_id + 1;
-//            add_node(new_node_id, intersection.point.get<0>(), intersection.point.get<1>());
-//            add_edge(intersection.from_i, new_node_id);
-//            add_edge(intersection.to_i, new_node_id);
-//            add_edge(intersection.from_j, new_node_id);
-//            add_edge(intersection.to_j, new_node_id);
-        }
     }
 };
 
@@ -269,10 +202,15 @@ int main() {
     json_output.AddMember("type", "FeatureCollection", allocator);
     auto features = rapidjson::Value(rapidjson::kArrayType);
 
+    // Create geojson
+    int index = 0;
     for (auto &face: faces) {
+        index++;
         rapidjson::Value feature(rapidjson::kObjectType);
         feature.AddMember("type", "Feature", allocator);
-        feature.AddMember("properties", rapidjson::kObjectType, allocator);
+        auto properties = rapidjson::Value(rapidjson::kObjectType);
+        properties.AddMember("color", index, allocator);
+        feature.AddMember("properties", properties, allocator);
 
         auto geometry = rapidjson::Value(rapidjson::kObjectType);
         geometry.AddMember("type", "Polygon", allocator);
