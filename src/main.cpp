@@ -244,6 +244,122 @@ void save_result(const std::vector<std::vector<TNode>> &faces,
   std::cout << "Output written to " << output_file << std::endl;
 }
 
+// Save graph in geojson format
+void save_graph(const TGraph &graph, const std::string &output_file) {
+  rapidjson::Document json_output(rapidjson::kObjectType);
+  rapidjson::Document::AllocatorType &allocator = json_output.GetAllocator();
+  json_output.AddMember("type", "FeatureCollection", allocator);
+  auto features = rapidjson::Value(rapidjson::kArrayType);
+
+  // Create geojson
+  for (auto &node : graph.nodes) {
+    rapidjson::Value feature(rapidjson::kObjectType);
+    feature.AddMember("type", "Feature", allocator);
+    auto properties = rapidjson::Value(rapidjson::kObjectType);
+    properties.AddMember("id", node.id, allocator);
+    properties.AddMember("type", "node", allocator);
+    feature.AddMember("properties", properties, allocator);
+
+    auto geometry = rapidjson::Value(rapidjson::kObjectType);
+    geometry.AddMember("type", "Point", allocator);
+    auto coordinates = rapidjson::Value(rapidjson::kArrayType);
+    coordinates.PushBack(node.lng, allocator);
+    coordinates.PushBack(node.lat, allocator);
+    geometry.AddMember("coordinates", coordinates, allocator);
+    feature.AddMember("geometry", geometry, allocator);
+    features.PushBack(feature, allocator);
+  }
+
+  // Add edges
+  for (size_t i = 0; i < graph.nodes.size(); i++) {
+    for (const auto &j : graph.edges[i]) {
+      rapidjson::Value feature(rapidjson::kObjectType);
+      feature.AddMember("type", "Feature", allocator);
+      auto properties = rapidjson::Value(rapidjson::kObjectType);
+      properties.AddMember("id", i, allocator);
+      properties.AddMember("type", "way", allocator);
+      properties.AddMember("nodes", rapidjson::Value(rapidjson::kArrayType),
+                           allocator);
+      properties["nodes"].PushBack(graph.nodes[i].id, allocator);
+      properties["nodes"].PushBack(graph.nodes[j].id, allocator);
+      feature.AddMember("properties", properties, allocator);
+
+      auto geometry = rapidjson::Value(rapidjson::kObjectType);
+      geometry.AddMember("type", "LineString", allocator);
+      auto coordinates = rapidjson::Value(rapidjson::kArrayType);
+      auto point = rapidjson::Value(rapidjson::kArrayType);
+      point.PushBack(graph.nodes[i].lng, allocator);
+      point.PushBack(graph.nodes[i].lat, allocator);
+      coordinates.PushBack(point, allocator);
+      point = rapidjson::Value(rapidjson::kArrayType);
+      point.PushBack(graph.nodes[j].lng, allocator);
+      point.PushBack(graph.nodes[j].lat, allocator);
+      coordinates.PushBack(point, allocator);
+      geometry.AddMember("coordinates", coordinates, allocator);
+      feature.AddMember("geometry", geometry, allocator);
+      features.PushBack(feature, allocator);
+    }
+  }
+
+  json_output.AddMember("features", features, allocator);
+
+  // Rapidjson writing process.
+  rapidjson::StringBuffer s;
+  rapidjson::Writer<rapidjson::StringBuffer> r_writer(s);
+  json_output.Accept(r_writer);
+
+  // Log to file.
+
+  if (output_file.empty()) {
+    std::cout << s.GetString() << std::endl;
+    return;
+  }
+
+  std::ofstream out_stream(output_file, std::ofstream::out);
+  out_stream << s.GetString();
+  out_stream.close();
+  std::cout << "Output written to " << output_file << std::endl;
+}
+
+void remove_leafs_dfs(Index node_index, TGraph &graph,
+                      std::vector<bool> &visited) {
+  visited[node_index] = true;
+
+  for (const auto &neighbor : graph.edges[node_index]) {
+    if (!visited[neighbor]) {
+      remove_leafs_dfs(neighbor, graph, visited);
+    }
+  }
+
+  std::vector<Index> to_remove;
+
+  for (const auto &neighbor : graph.edges[node_index]) {
+    if (graph.edges[neighbor].size() <= 1) {
+      to_remove.push_back(neighbor);
+    }
+  }
+
+  for (const auto neighbor : to_remove) {
+    graph.edges[node_index].erase(neighbor);
+  }
+}
+
+void remove_leafs(TGraph &graph) {
+  std::cout << "Before removing leafs: " << std::endl;
+  graph.print_info();
+  std::vector<bool> visited(graph.nodes.size(), false);
+  std::vector<std::pair<Index, Index>> to_remove;
+
+  for (Index i = 0; i < graph.nodes.size(); i++) {
+    if (!visited[i]) {
+      remove_leafs_dfs(i, graph, visited);
+    }
+  }
+
+  std::cout << "After removing leafs: " << std::endl;
+  graph.print_info();
+}
+
 int main(int argc, char **argv) {
 
   // Read input file name from command line arguments.
@@ -258,10 +374,19 @@ int main(int argc, char **argv) {
 
   auto graph = read_graph_from_json(input_file);
 
+  remove_leafs(graph);
+  // remove_leafs(graph);
+  // remove_leafs(graph);
+  // remove_leafs(graph);
+  // remove_leafs(graph);
+  // remove_leafs(graph);
+
+  std::cout << "Finding faces..." << std::endl;
   graph.print_info();
   auto faces = graph.find_all_faces();
 
   save_result(faces, output_file);
+  save_graph(graph, "logs/graph.geojson");
 
   return 0;
 }
