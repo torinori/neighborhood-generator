@@ -1,4 +1,5 @@
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <sstream>
@@ -33,10 +34,10 @@ typedef adjacency_list<vecS, vecS, undirectedS, property<vertex_index_t, int>,
     PlanarGraph;
 
 struct TNode {
-  const Id id;
-  const Index index;
-  const double lat;
-  const double lng;
+  Id id;
+  Index index;
+  double lat;
+  double lng;
 
   TNode(Id id, Index index, double lat, double lng)
       : id(id), index(index), lat(lat), lng(lng) {}
@@ -47,7 +48,7 @@ struct TGraph {
   std::vector<std::unordered_set<Index>> edges;
   std::vector<Id> node_ids;
   std::unordered_map<Id, Index> node_id_to_index;
-  Id _max_id = 0;
+  size_t _number_of_edges = 0;
 
   void add_node(Id id, double lat, double lng) {
     if (node_id_to_index.count(id)) {
@@ -59,24 +60,36 @@ struct TGraph {
     node_ids.push_back(id);
     node_id_to_index[node.id] = node.index;
     edges.emplace_back();
-    _max_id = std::max(_max_id, id);
   }
 
-  void add_edge(Id node_a, Id node_b) {
+  bool add_edge(Id node_a, Id node_b) {
     if (!node_id_to_index.count(node_a) or !node_id_to_index.count(node_b)) {
-      return;
+      return false;
     }
+
     Index index_a = node_id_to_index.at(node_a);
     Index index_b = node_id_to_index.at(node_b);
-    edges[index_a].insert(index_b);
-    edges[index_b].insert(index_a);
+
+    bool added = edges[index_a].insert(index_b).second;
+    assert(edges[index_b].insert(index_a).second == added);
+
+    _number_of_edges += added;
+    return added;
   }
 
-  void remove_edge(Id node_a, Id node_b) {
+  bool remove_edge(Id node_a, Id node_b) {
+    if (!node_id_to_index.count(node_a) or !node_id_to_index.count(node_b)) {
+      return false;
+    }
+
     Index a = node_id_to_index.at(node_a);
     Index b = node_id_to_index.at(node_b);
-    edges[a].erase(b);
-    edges[b].erase(a);
+
+    bool removed = edges[a].erase(b);
+    assert(edges[b].erase(a) == removed);
+
+    _number_of_edges -= removed;
+    return removed;
   }
 
   struct vertex_output_visitor : public planar_face_traversal_visitor {
@@ -128,14 +141,15 @@ struct TGraph {
     return v_vis.faces;
   }
 
-  void print_info() {
-    std::cout << "Nodes: " << nodes.size() << std::endl;
-    auto number_of_edges =
-        std::accumulate(edges.begin(), edges.end(), 0,
-                        [](size_t sum, const std::unordered_set<Index> &v) {
-                          return sum + v.size();
-                        });
-    std::cout << "Edges: " << number_of_edges << std::endl;
+  size_t number_of_edges() const { return _number_of_edges; }
+
+  size_t number_of_nodes() const { return nodes.size(); }
+
+  std::string info() {
+    std::stringstream ss;
+    ss << "(Nodes: " << number_of_nodes() << ", Edges: " << number_of_edges()
+       << ")";
+    return ss.str();
   }
 };
 
@@ -318,46 +332,62 @@ void save_graph(const TGraph &graph, const std::string &output_file) {
   std::ofstream out_stream(output_file, std::ofstream::out);
   out_stream << s.GetString();
   out_stream.close();
-  std::cout << "Output written to " << output_file << std::endl;
-}
-
-void remove_leafs_dfs(Index node_index, TGraph &graph,
-                      std::vector<bool> &visited) {
-  visited[node_index] = true;
-
-  for (const auto &neighbor : graph.edges[node_index]) {
-    if (!visited[neighbor]) {
-      remove_leafs_dfs(neighbor, graph, visited);
-    }
-  }
-
-  std::vector<Index> to_remove;
-
-  for (const auto &neighbor : graph.edges[node_index]) {
-    if (graph.edges[neighbor].size() <= 1) {
-      to_remove.push_back(neighbor);
-    }
-  }
-
-  for (const auto neighbor : to_remove) {
-    graph.edges[node_index].erase(neighbor);
-  }
+  std::cout << "Logs written to " << output_file << std::endl;
 }
 
 void remove_leafs(TGraph &graph) {
-  std::cout << "Before removing leafs: " << std::endl;
-  graph.print_info();
-  std::vector<bool> visited(graph.nodes.size(), false);
-  std::vector<std::pair<Index, Index>> to_remove;
+  size_t nu_edges_before = graph.number_of_edges();
+  size_t nu_nodes_before = graph.number_of_nodes();
+  std::queue<Index> leafs;
 
   for (Index i = 0; i < graph.nodes.size(); i++) {
-    if (!visited[i]) {
-      remove_leafs_dfs(i, graph, visited);
+    if (graph.edges[i].size() == 1) {
+      leafs.push(i);
     }
   }
 
-  std::cout << "After removing leafs: " << std::endl;
-  graph.print_info();
+  while (!leafs.empty()) {
+    Index leaf = leafs.front();
+    leafs.pop();
+    if (graph.edges[leaf].size() != 1) {
+      continue;
+    }
+    Index parent = *graph.edges[leaf].begin();
+    graph.remove_edge(graph.nodes[leaf].id, graph.nodes[parent].id);
+    if (graph.edges[parent].size() == 1) {
+      leafs.push(parent);
+    }
+  }
+
+  // Normolize graph
+  TGraph reduced_graph;
+
+  for (Index i = 0; i < graph.nodes.size(); i++) {
+    if (graph.edges[i].empty()) {
+      continue;
+    }
+
+    reduced_graph.add_node(graph.nodes[i].id, graph.nodes[i].lat,
+                           graph.nodes[i].lng);
+  }
+
+  for (Index i = 0; i < graph.nodes.size(); i++) {
+    for (const auto &j : graph.edges[i]) {
+      reduced_graph.add_edge(graph.nodes[i].id, graph.nodes[j].id);
+    }
+  }
+
+  graph = reduced_graph;
+
+  size_t nu_edges_after = graph.number_of_edges();
+  size_t nu_nodes_after = graph.number_of_nodes();
+
+  std::cout << "Removed "
+            << double(nu_edges_before - nu_edges_after) / (nu_edges_before)
+            << " \% edges." << std::endl;
+  std::cout << "Removed "
+            << double(nu_nodes_before - nu_nodes_after) / (nu_nodes_before)
+            << " \% nodes." << std::endl;
 }
 
 int main(int argc, char **argv) {
@@ -373,16 +403,11 @@ int main(int argc, char **argv) {
   std::string output_file = argv[2];
 
   auto graph = read_graph_from_json(input_file);
+  std::cout << "Initial graph: " << graph.info() << std::endl;
 
   remove_leafs(graph);
-  // remove_leafs(graph);
-  // remove_leafs(graph);
-  // remove_leafs(graph);
-  // remove_leafs(graph);
-  // remove_leafs(graph);
 
-  std::cout << "Finding faces..." << std::endl;
-  graph.print_info();
+  std::cout << "Finding faces... " << graph.info() << std::endl;
   auto faces = graph.find_all_faces();
 
   save_result(faces, output_file);
